@@ -1,4 +1,4 @@
-RPi_websocket
+Connecting Raspberry Pi to the Internet
 =============
 
-Raspberry Pi websocket for handling color sensor data
+Takes color sensor data entering the I2C pins of the GPIO and sends it over a websocket connection to a client.
