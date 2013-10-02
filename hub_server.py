@@ -1,8 +1,14 @@
 ###############################################################################
 ## All code excluding the websocket sections was written by Chung-Hay Luk.
 ##
-## Raspberry Pi serves as the server for the websocket. 
-## It reads in I2C data from the GPIO pins.
+## This code serves as the hub server for the websocket. Clients will connect
+## with this hub like so:
+## 1. Raspberry Pi will send color data and controller state of the color
+##    sensor. It will receive color decision from the hub, then visualize it
+##    in the LED strip.
+## 2. Website for audience polling will send color data for each audience
+##    member. The website will display color decision and controller state from
+##    the hub.
 ##
 ##  Copyright 2013
 ##  Licensed under the Apache License, Version 2.0 (the "License").
@@ -45,9 +51,10 @@ class BroadcastServerProtocol(websocket.WebSocketServerProtocol):
 
   def onMessage(self, msg, binary):
      if not binary:
-        # Validate that the message data is proper JSON dictionary.
+        # Validate that the message data is proper JSON dictionary with desired
+        # keys.
         msg = validateData(msg)
-        
+
         # Figure out if the message is from the model/sensor
         # or from the audience/webpage.
         is_sensor = authenticateSensor(msg)
@@ -56,17 +63,21 @@ class BroadcastServerProtocol(websocket.WebSocketServerProtocol):
         # The LEDs will be directly controlled by Raspberry Pi.
         if is_sensor:
           print "data from sensor"
-          # outputMsg = {'': }
-          # Turn into string: json.dumps
-          #self.factory.broadcast()
+          outputMsg = msg
 
         # If the message is from an audience member, add it to the
         # voting system. Update the resulting decision color,
         # and send it to the webpage. Send it to Raspberry Pi to turn on LEDs,
         # if the model sets the dress control mode to audience.
         else:
-          # Use voting model from self.factory.model
-          #self.factory.broadcast("'%s' from %s" % (msg, self.peerstr))
+          # Output the updated voting model from self.factory.model.
+          outputMsg = tallyVotes(self.factory.model)
+
+        # Display decided upon color.
+        self.factory.broadcast("'%s' from %s" % (outputMsg, self.peerstr))
+
+        # Broadcast json data as string for websocket.
+        factory.broadcast(json.dumps(outputMsg))
 
   def connectionLost(self, reason):
      websocket.WebSocketServerProtocol.connectionLost(self, reason)
@@ -109,6 +120,15 @@ class BroadcastServerFactory(websocket.WebSocketServerFactory):
         print "message sent to " + c.peerstr
 
 
+# TODO: Tally up votes.
+def tallyVotes(dataModel):
+  # TODO: figure out voting scheme.
+  decidedColorModel = dataModel
+  
+  return decidedColorModel
+
+
+# Determine if the data is valid json with the needed keys and value format.
 def validateData(data):
   # Check that data is in proper json format.
   try:
@@ -119,6 +139,21 @@ def validateData(data):
   # Check object is dictionary.
   if not isinstance(obj, dict):
     raise ValueError, "Object is not a dictionary"
+
+  # Validate desired keys in object.
+  keys = ('red', 'green', 'blue')
+  missing_keys = []
+  for key in keys:
+    if key not in obj:
+      missing_keys.append(key)
+
+  if missing_keys:
+    raise ValueError, "Missing keys: %s" % missing_keys
+
+  # Validate values of desired keys are integers.
+  for key, value in obj.iteritems():
+    if not isinstance(value, int):
+      raise ValueError, "Value for %s is not an integer: %s" % (key, value)
 
   return obj
 
