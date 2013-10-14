@@ -49,8 +49,9 @@ class DataClientProtocol(websocket.WebSocketClientProtocol):
   Simple client that connects to a WebSocket server, sends data, and prints everything it receives.
   """
 
-  def onOpen(self):
-    self.factory.register(self)
+  def onConnect(self, connectionResponse):
+    print 'protocol onConnect'
+    self.factory.register(self, connectionResponse)
 
   def onMessage(self, msg, binary):
     print "Got message: " + msg
@@ -61,10 +62,6 @@ class DataClientProtocol(websocket.WebSocketClientProtocol):
        if msg:
          visualizeData(msg)
 
-  def connectionLost(self, reason):
-    websocket.WebSocketServerProtocol.connectionLost(self, reason)
-    self.factory.unregister(self)
-
 
 class DataClientFactory(websocket.WebSocketClientFactory):
   """
@@ -72,26 +69,30 @@ class DataClientFactory(websocket.WebSocketClientFactory):
   currently connected server.
   """
 
-  def __init__(self, url, debug = False, debugCodePaths = False):
-     websocket.WebSocketClientFactory.__init__(self, url,
-                                     debug=debug, debugCodePaths=debugCodePaths)
-     self.server = []
+  def __init__(self, url, debug = True, debugCodePaths = False):
+    websocket.WebSocketClientFactory.__init__(self, url,
+                                   debug=debug, debugCodePaths=debugCodePaths)
+    self.server = None
 
-  def register(self, server):
-     if not server in self.server:
-        print "registered server " + server.peerstr
-        self.server.append(server)
+  def register(self, server, response):
+    print "registered server " + response.peerstr
+    self.server = server
 
   def unregister(self, server):
-     if server in self.server:
-        print "unregistered server " + server.peerstr
-        self.server.remove(server)
+    print "unregistered server"
+    self.server = None
+
+  def clientConnectionFailed(self, connector, reason):
+    print "connection failed: " + str(reason)
+
+  def clientConnectionLost(self, connector, reason):
+    print "connection lost: " + str(reason)
 
   def broadcast(self, msg):
-     print "broadcasting message: %s" % msg
-     for server in self.server:
-        server.sendMessage(msg)
-        print "message sent to " + server.peerstr
+    print "broadcasting message: %s" % msg
+    print self.server
+    if self.server is not None:
+      self.server.sendMessage(msg) # TODO: check how failure is handled when connection is lost.
 
 
 class rgbChannelObject:
@@ -129,7 +130,7 @@ def readI2CData(i2c_input, factory, channelObject, idString):
     green = data[5] << 8 | data[4]
     blue = data[7] << 8 | data[6]
     crgb = "clear: %s, red: %s, green: %s, blue: %s\n" % (clear, red, green, blue)
-    print crgb
+    #print crgb
 
     # Turn raw data into hex code for visualization.
     thesum = red + green + blue
@@ -141,8 +142,8 @@ def readI2CData(i2c_input, factory, channelObject, idString):
       r = round(float(red) / float(thesum) * 256)
       g = round(float(green) / float(thesum) * 256)
       b = round(float(blue) / float(thesum) * 256)
-    hexrgb = "{\"id\": %s, \"clear\": %d, \"red\": %d, \"green\": %d, \"blue\": %d}" % (idString, clear, r, g, b)
-    print hexrgb
+    hexrgb = "{\"id\": \"%s\", \"clear\": %d, \"red\": %d, \"green\": %d, \"blue\": %d}" % (idString, clear, r, g, b)
+    #print hexrgb
 
     # Calculate PWM values for visualizing rgb values in rgb LED output.
     dcR = 1 - float(r) / float(256)
@@ -203,8 +204,9 @@ def validateData(data):
 
   # Validate values of desired keys are integers.
   for key, value in obj.iteritems():
-    if not isinstance(value, int):
-      raise ValueError, "Value for %s is not an integer: %s" % (key, value)
+    if key != 'id':
+      if not isinstance(value, int):
+        raise ValueError, "Value for %s is not an integer: %s. Its type: %s" % (key, value, type(value))
 
   return obj
 
@@ -241,8 +243,8 @@ def getArguments():
   parser = argparse.ArgumentParser(description=
                       'Set settings for running this script.')
   parser.add_argument('-a', '--address',
-                      default='ws://172.31.44.63:',
-                      help='address of WebSocket server (default: ws://172.31.44.63:  It''s the Amazon cloud instance for Project Nunway)')
+                      default='ws://ec2-54-200-22-181.us-west-2.compute.amazonaws.com',
+                      help='address of WebSocket server (default: ws://ec2-54-200-22-181.us-west-2.compute.amazonaws.com  It''s the Amazon cloud instance for Project Nunway)')
   parser.add_argument('-p', '--port_number', type=int,
                       default=9000,
                       help='port number of server (default: 9000)')
@@ -273,7 +275,7 @@ def main():
   # Get arguments for WebSocket server address and portal number.
   # To change them from the default values, set them as flag options.
   args = getArguments()
-  serverPortURL = args.address + str(args.port_number)
+  serverPortURL = '%s:%d' % (args.address, args.port_number)
 
   # Create connection to I2C Bus on the Raspberry Pi to read in sensor data.
   i2c_input = openI2CBus()
@@ -282,7 +284,7 @@ def main():
   channelObject = setupPWM(args.red_pin, args.green_pin, args.blue_pin)
 
   # Create factory.
-  factory = DataClientFactory(serverPortURL, debug = False)
+  factory = DataClientFactory(serverPortURL, debug = True)
   factory.protocol = DataClientProtocol
   websocket.connectWS(factory)
 
