@@ -92,7 +92,7 @@ class DataClientFactory(websocket.WebSocketClientFactory):
     print "broadcasting message: %s" % msg
     print self.server
     if self.server is not None:
-      self.server.sendMessage(msg) # TODO: check how failure is handled when connection is lost.
+      self.server.sendMessage(msg)
 
 
 class rgbChannelObject:
