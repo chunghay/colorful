@@ -88,13 +88,10 @@ class DataClientFactory(websocket.WebSocketClientFactory):
         self.server.remove(server)
 
   def broadcast(self, msg):
-     print "broadcasting message '%s' .." % msg
+     print "broadcasting message: %s" % msg
      for server in self.server:
         server.sendMessage(msg)
         print "message sent to " + server.peerstr
-        # Send color data from sensor here. 
-        # Include 'id' : 5a2649734c55285b24777e427e, so hub server can identify
-        # this message as coming from Raspberry Pi.
 
 
 class rgbChannelObject:
@@ -124,7 +121,7 @@ def openI2CBus():
 
 
 # Read I2C data.
-def readI2CData(i2c_input, factory, channelObject):
+def readI2CData(i2c_input, factory, channelObject, idString):
   while True:
     data = i2c_input.read_i2c_block_data(0x29, 0)
     clear = clear = data[1] << 8 | data[0]
@@ -144,7 +141,7 @@ def readI2CData(i2c_input, factory, channelObject):
       r = round(float(red) / float(thesum) * 256)
       g = round(float(green) / float(thesum) * 256)
       b = round(float(blue) / float(thesum) * 256)
-    hexrgb = "{\"clear\": %d, \"red\": %d, \"green\": %d, \"blue\": %d}" % (clear, r, g, b)
+    hexrgb = "{\"id\": %s, \"clear\": %d, \"red\": %d, \"green\": %d, \"blue\": %d}" % (idString, clear, r, g, b)
     print hexrgb
 
     # Calculate PWM values for visualizing rgb values in rgb LED output.
@@ -268,6 +265,11 @@ def getArguments():
 
 
 def main():
+  # Have id that uniquely identifies Raspberry Pi as a client to the hub server.
+  # Change this id for private use. The following code is publicly known and
+  # therefore not at all secure.
+  idForRPi = '5a2649734c55285b24777e427e'
+  
   # Get arguments for WebSocket server address and portal number.
   # To change them from the default values, set them as flag options.
   args = getArguments()
@@ -285,7 +287,7 @@ def main():
   websocket.connectWS(factory)
 
   # Create one more thread. There's a main thread already.
-  thread = threading.Thread(target=readI2CData, args=(i2c_input, factory, channelObject))
+  thread = threading.Thread(target=readI2CData, args=(i2c_input, factory, channelObject, idForRPi))
   thread.daemon = True
   thread.start()
 
