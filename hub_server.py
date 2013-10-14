@@ -183,7 +183,7 @@ def main():
   factory = BroadcastServerFactory("ws://[::]:9000", voteModel = model,
                                     debug = False)
   factory.protocol = BroadcastServerProtocol
-  listenWS(factory)
+  websocket.listenWS(factory)
 
   # Start handling requests across websocket.
   reactor.run()
