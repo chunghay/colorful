@@ -152,8 +152,9 @@ def validateData(data):
 
   # Validate values of desired keys are integers.
   for key, value in obj.iteritems():
-    if not isinstance(value, int):
-      raise ValueError, "Value for %s is not an integer: %s" % (key, value)
+    if key != 'id':
+      if not isinstance(value, int):
+        raise ValueError, "Value for %s is not an integer: %s" % (key, value)
 
   return obj
 
