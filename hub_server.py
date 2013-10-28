@@ -53,7 +53,11 @@ class BroadcastServerProtocol(websocket.WebSocketServerProtocol):
      if not binary:
         # Validate that the message data is proper JSON dictionary with desired
         # keys.
-        msg = validateData(msg)
+        try:
+          msg = validateData(msg)
+        except ValueError, e:
+          print e
+          return
 
         # Figure out if the message is from the model/sensor
         # or from the audience/webpage.
@@ -74,10 +78,10 @@ class BroadcastServerProtocol(websocket.WebSocketServerProtocol):
           outputMsg = tallyVotes(self.factory.model)
 
         # Display decided upon color.
-        self.factory.broadcast("'%s' from %s" % (outputMsg, self.peerstr))
+        print "'%s' from %s" % (outputMsg, self.peerstr)
 
-        # Broadcast json data as string for websocket.
-        factory.broadcast(json.dumps(outputMsg))
+        # Broadcast data as json string for websocket.
+        self.factory.broadcast(json.dumps(outputMsg))
 
   def connectionLost(self, reason):
      websocket.WebSocketServerProtocol.connectionLost(self, reason)
