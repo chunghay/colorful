@@ -34,6 +34,7 @@
 import RPi.GPIO as GPIO
 import argparse
 import json
+import math
 import serial
 import smbus
 import sys
@@ -42,6 +43,22 @@ import time
 from autobahn import websocket
 from twisted.internet import reactor
 from twisted.python import log
+
+
+gamma_table = {}
+
+arduino_lock = threading.Lock()
+arduino = None
+
+
+def populateGammaTable():
+  for i in range(256):
+    x = float(i)
+    x /= 255
+    x = math.pow(x, 2.5)
+    x *= 255;
+    
+    gamma_table[i] = int(x)
 
 
 class DataClientProtocol(websocket.WebSocketClientProtocol):
@@ -58,9 +75,14 @@ class DataClientProtocol(websocket.WebSocketClientProtocol):
     if not binary:
        # Validate that the message data is proper JSON dictionary with desired
        # keys.
-       msg = validateData(msg)
+       try:
+         msg = validateData(msg)
+       except ValueError, e:
+         print e
+         return
+       
        if msg:
-         visualizeData(msg)
+         sendDataToArduino(msg)
 
 
 class DataClientFactory(websocket.WebSocketClientFactory):
@@ -90,16 +112,8 @@ class DataClientFactory(websocket.WebSocketClientFactory):
 
   def broadcast(self, msg):
     print "broadcasting message: %s" % msg
-    print self.server
     if self.server is not None:
       self.server.sendMessage(msg)
-
-
-class rgbChannelObject:
-  # Default values of rgb channel values are 0 (no LEDs turned on).
-  red = 0
-  green = 0
-  blue = 0
 
 
 # Open I2C connection.
@@ -115,6 +129,10 @@ def openI2CBus():
     print "Device found\n"
     bus.write_byte(0x29, 0x80|0x00) # 0x00 = ENABLE register
     bus.write_byte(0x29, 0x01|0x02) # 0x01 = Power on, 0x02 RGB sensors enabled
+    bus.write_byte(0x29, 0x80|0x0F) # 0x0F = control register for setting gain
+    bus.write_byte(0x29, 0x01)      # 0x01 = 4x gain
+    bus.write_byte(0x29, 0x80|0x01) # 0x01 = RGBC timing register
+    bus.write_byte(0x29, 0xEB)      # 256 - 21 = 0xEB (21 * 2.4 ms = 50 ms)
     bus.write_byte(0x29, 0x80|0x14) # Reading results start register 14, LSB then MSB
     return bus
   else:
@@ -122,62 +140,60 @@ def openI2CBus():
 
 
 # Read I2C data.
-def readI2CData(i2c_input, factory, channelObject, idString):
+def readI2CData(i2c_input, factory, idString):
   while True:
     data = i2c_input.read_i2c_block_data(0x29, 0)
-    clear = clear = data[1] << 8 | data[0]
-    red = data[3] << 8 | data[2]
-    green = data[5] << 8 | data[4]
-    blue = data[7] << 8 | data[6]
-    crgb = "clear: %s, red: %s, green: %s, blue: %s\n" % (clear, red, green, blue)
-    #print crgb
+    clear = data[1] << 8 | data[0]
+    red_raw = data[3] << 8 | data[2]
+    green_raw = data[5] << 8 | data[4]
+    blue_raw = data[7] << 8 | data[6]
 
-    # Turn raw data into hex code for visualization.
-    thesum = red + green + blue
-    if thesum == 0:
-      r = 0
-      g = 0
-      b = 0
-    else:
-      r = round(float(red) / float(thesum) * 256)
-      g = round(float(green) / float(thesum) * 256)
-      b = round(float(blue) / float(thesum) * 256)
-    hexrgb = "{\"id\": \"%s\", \"clear\": %d, \"red\": %d, \"green\": %d, \"blue\": %d}" % (idString, clear, r, g, b)
-    #print hexrgb
+    red_i = int((red_raw / float(clear)) * 255)
+    green_i = int((green_raw / float(clear)) * 255)
+    blue_i = int((blue_raw / float(clear)) * 255)
 
-    # Calculate PWM values for visualizing rgb values in rgb LED output.
-    dcR = 1 - float(r) / float(256)
-    dcG = 1 - float(g) / float(256)
-    dcB = 1 - float(b) / float(256)
+    print red_raw, green_raw, blue_raw, clear    
+    print red_i, green_i, blue_i
 
-    # Ensure that duty cycle (dc) range is 0.0 <= dcX <= 100.0.
-    dcR = sorted([0, dcR, 100])[1]
-    dcG = sorted([0, dcG, 100])[1]
-    dcB = sorted([0, dcB, 100])[1]
-    print "Duty cycles: %.2f, %.2f, %.2f\n" % (1 - dcR, 1 - dcG, 1 - dcB)
+    red = gamma_table[red_i]
+    green = gamma_table[green_i]
+    blue = gamma_table[blue_i]
+    #red = red_i
+    #green = green_i
+    #blue = blue_i
+        
+    print red, green, blue
 
-    channelObject.red.ChangeDutyCycle(dcR)
-    channelObject.green.ChangeDutyCycle(dcG)
-    channelObject.blue.ChangeDutyCycle(dcB)
+    colors = {
+      'red': red,
+      'green': green,
+      'blue': blue,
+      'clear': int(clear),
+      'id': idString
+    }
 
-    time.sleep(1)
-
-    # Check that data is formatted correctly.
-    try:
-      obj = validateData(hexrgb)
-    except ValueError, e:
-      print e
-    else:
-      # Send json data as string for websocket.
-      factory.broadcast(json.dumps(obj))
+    factory.broadcast(json.dumps(colors))
+    time.sleep(0.250)
 
   else:
     print "I2C connected device not found\n"
-    
-    channelObject.red.stop()
-    channelObject.green.stop()
-    channelObject.blue.stop()
-    GPIO.cleanup()
+
+
+def arduinoBackgroundConnector():
+  global arduino
+  while True:
+    with arduino_lock:
+      if arduino is None:
+        try:
+          arduino = serial.Serial('/dev/ttyACM0',
+                                  baudrate=9600,
+                                  bytesize=serial.EIGHTBITS,
+                                  parity=serial.PARITY_NONE,
+                                  stopbits=serial.STOPBITS_ONE,
+                                  timeout=0)
+        except serial.SerialException:
+          print 'Arduino not available.'
+    time.sleep(1)
 
 
 # Validate data.
@@ -190,7 +206,7 @@ def validateData(data):
 
   # Check object is dictionary.
   if not isinstance(obj, dict):
-    raise ValueError, "Object is not a dictionary"
+    raise ValueError, "Object is not a dictionary, but type %s" % type(obj)
 
   # Validate desired keys in object.
   keys = ('clear', 'red', 'green', 'blue')
@@ -211,30 +227,34 @@ def validateData(data):
   return obj
 
 
-def visualizeData(data):
-  print 'visualize data'
+def sendDataToArduino(data):
+  global arduino
 
+  colors = {}
+  for key, value in data.iteritems():
+    if key != 'id':
+      colors[key] = value
+  expected_colors = ('red', 'green', 'blue')
+  for color in expected_colors:
+    if color not in colors:
+      print 'missing color %s, not updating color' % color
+      return
 
-def setupPWM(rPin, gPin, bPin):
-  GPIO.setmode(GPIO.BOARD)
-  GPIO.setup(rPin, GPIO.OUT)
-  GPIO.setup(gPin, GPIO.OUT)
-  GPIO.setup(bPin, GPIO.OUT)
+  print 'sending colors to Arduino: %s' % str(colors)
+  message = ('\xFF\xFE' +
+             chr(colors['red']) + chr(colors['green']) +
+             chr(colors['blue']) +
+             '\x00')
 
-  pR = GPIO.PWM(rPin, 0.1) # channel, frequency (Hz). Don't initiate freq. as 0
-  pG = GPIO.PWM(gPin, 0.1) # channel, frequency (Hz)
-  pB = GPIO.PWM(bPin, 0.1) # channel, frequency (Hz)
+  with arduino_lock:
+    if arduino is None:
+      return
 
-  pR.start(0)
-  pG.start(0)
-  pB.start(0)
-  
-  channelObj = rgbChannelObject()
-  channelObj.red = pR
-  channelObj.green = pG
-  channelObj.blue = pB
-  
-  return channelObj
+    try:
+      arduino.write(message)
+    except serial.SerialException:
+      print 'Error writing to Arduino.'
+      arduino = None
 
 
 # Get input arguments.
@@ -272,6 +292,8 @@ def main():
   # therefore not at all secure.
   idForRPi = '5a2649734c55285b24777e427e'
   
+  populateGammaTable()
+  
   # Get arguments for WebSocket server address and portal number.
   # To change them from the default values, set them as flag options.
   args = getArguments()
@@ -280,23 +302,24 @@ def main():
   # Create connection to I2C Bus on the Raspberry Pi to read in sensor data.
   i2c_input = openI2CBus()
 
-  # Create 3 GPIO PWM channel objects for displaying the sensor's color data.
-  channelObject = setupPWM(args.red_pin, args.green_pin, args.blue_pin)
-
   # Create factory.
   factory = DataClientFactory(serverPortURL, debug = True)
   factory.protocol = DataClientProtocol
   websocket.connectWS(factory)
+  
+  # Background thread to connect to the Arduino, and reconnect if it is
+  # disconnected.
+  arduino_thread = threading.Thread(target=arduinoBackgroundConnector)
+  arduino_thread.daemon = True
+  arduino_thread.start()
 
   # Create one more thread. There's a main thread already.
-  thread = threading.Thread(target=readI2CData, args=(i2c_input, factory, channelObject, idForRPi))
+  thread = threading.Thread(target=readI2CData, args=(i2c_input, factory, idForRPi))
   thread.daemon = True
   thread.start()
 
   # Start handling requests across websocket.
   reactor.run()
-
-  # TODO: figure out how to stop PWM channels (pR.stop()) and do GPIO.cleanup() after websocket is closed.
 
 
 if __name__ == '__main__':
