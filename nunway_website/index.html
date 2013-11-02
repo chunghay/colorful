@@ -2,39 +2,10 @@
 <html>
    <head>
      <link href="assets/css/style.css" rel="stylesheet">
-      <script type="text/javascript">
-         var sock = null;
-         var wsuri = "ws://ec2-54-200-22-181.us-west-2.compute.amazonaws.com:9000"; // IP address of hub server
-
-         window.onload = function() {
-            console.log("loaded");
-            sock = new WebSocket(wsuri);
-
-            sock.onopen = function() {
-               console.log("connected to " + wsuri);
-            }
-
-            sock.onclose = function(e) {
-               console.log("connection closed (" + e.code + ")");
-            }
-
-            sock.onerror = function(e) {
-               console.log("connection error (" + e.code + ")");
-            }
-
-            sock.onmessage = function(e) {
-               console.log("message received: " + e.data);
-               //$("#colorTxt").text(e.data);
-
-               // Isolate decided values for red, green, blue.
-               var obj = JSON.parse(e.data);
-               $("body").css('background-color', "rgb(" + obj.red + ", " + obj.green + ", " + obj.blue + ")");
-            }
-         };
-      </script>
-      <title>Project Nunway 2013: Dissident Futures</title>
+     <title>Project Nunway 2013: Dissident Futures</title>
    </head>
    <body>
-      <script src="assets/js/jquery.js"></script>
+     <script type="text/javascript" src="assets/js/jquery.js"></script>
+     <script type="text/javascript" src="assets/js/ws_client.js"></script>
    </body>
 </html>
