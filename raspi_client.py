@@ -34,6 +34,7 @@
 import RPi.GPIO as GPIO
 import argparse
 import json
+import logging
 import math
 import serial
 import smbus
@@ -67,18 +68,18 @@ class DataClientProtocol(websocket.WebSocketClientProtocol):
   """
 
   def onConnect(self, connectionResponse):
-    print 'protocol onConnect'
+    logging.info('protocol onConnect')
     self.factory.register(self, connectionResponse)
 
   def onMessage(self, msg, binary):
-    print "Got message: " + msg
+    logging.info("Got message: " + msg)
     if not binary:
        # Validate that the message data is proper JSON dictionary with desired
        # keys.
        try:
          msg = validateData(msg)
        except ValueError, e:
-         print e
+         logging.warning(e)
          return
        
        if msg:
@@ -97,24 +98,24 @@ class DataClientFactory(websocket.WebSocketClientFactory):
     self.server = None
 
   def register(self, server, response):
-    print "registered server " + response.peerstr
+    logging.info("registered server " + response.peerstr)
     self.server = server
 
   def unregister(self, server):
-    print "unregistered server"
+    logging.info("unregistered server")
     self.server = None
 
   def clientConnectionFailed(self, connector, reason):
-    print "connection failed: " + str(reason)
+    logging.warning("connection failed: " + str(reason))
     time.sleep(1)
-    print "try reconnecting"
+    logging.info("try reconnecting")
     connector.connect()
 
   def clientConnectionLost(self, connector, reason):
-    print "connection lost: " + str(reason)
+    logging.warning("connection lost: " + str(reason))
 
   def broadcast(self, msg):
-    print "broadcasting message: %s" % msg
+    logging.info("broadcasting message: %s" % msg)
     if self.server is not None:
       self.server.sendMessage(msg)
 
@@ -129,7 +130,7 @@ def openI2CBus():
   ver = bus.read_byte(0x29)
   # version # should be 0x44
   if ver == 0x44:
-    print "Device found\n"
+    logging.warning("Device found\n")
     bus.write_byte(0x29, 0x80|0x00) # 0x00 = ENABLE register
     bus.write_byte(0x29, 0x01|0x02) # 0x01 = Power on, 0x02 RGB sensors enabled
     bus.write_byte(0x29, 0x80|0x0F) # 0x0F = control register for setting gain
@@ -139,7 +140,7 @@ def openI2CBus():
     bus.write_byte(0x29, 0x80|0x14) # Reading results start register 14, LSB then MSB
     return bus
   else:
-    print "Device not found\n"
+    logging.warning("Device not found\n")
 
 
 # Read I2C data.
@@ -148,7 +149,7 @@ def readI2CData(i2c_input, factory, idString):
     try:
       data = i2c_input.read_i2c_block_data(0x29, 0)
     except IOError:
-      print "Could not read I2C data"
+      logging.warning("Could not read I2C data")
       continue
 
     clear = data[1] << 8 | data[0]
@@ -156,21 +157,29 @@ def readI2CData(i2c_input, factory, idString):
     green_raw = data[5] << 8 | data[4]
     blue_raw = data[7] << 8 | data[6]
 
-    red_i = int((red_raw / float(clear)) * 255)
-    green_i = int((green_raw / float(clear)) * 255)
-    blue_i = int((blue_raw / float(clear)) * 255)
+    if clear is not 0:
+      red_i = int((red_raw / float(clear)) * 255)
+      green_i = int((green_raw / float(clear)) * 255)
+      blue_i = int((blue_raw / float(clear)) * 255)
+    else:
+      red_i = 0
+      green_i = 0
+      blue_i = 0
 
-    print red_raw, green_raw, blue_raw, clear    
-    print red_i, green_i, blue_i
+    logging.info("%d, %d, %d, %d" % (red_raw, green_raw, blue_raw, clear))
+    logging.info("%d, %d, %d" % (red_i, green_i, blue_i))
 
-    red = gamma_table[red_i]
-    green = gamma_table[green_i]
-    blue = gamma_table[blue_i]
-    #red = red_i
-    #green = green_i
-    #blue = blue_i
+    try:
+      red = gamma_table[red_i]
+      green = gamma_table[green_i]
+      blue = gamma_table[blue_i]
+      #red = red_i
+      #green = green_i
+      #blue = blue_i
+    except KeyError:
+      continue
         
-    print red, green, blue
+    logging.info("%d, %d, %d" % (red, green, blue))
 
     colors = {
       'red': red,
@@ -181,7 +190,8 @@ def readI2CData(i2c_input, factory, idString):
     }
 
     factory.broadcast(json.dumps(colors))
-    time.sleep(0.250)
+    #time.sleep(0.250)
+    time.sleep(0.50)
 
 
 def arduinoBackgroundConnector():
@@ -195,9 +205,11 @@ def arduinoBackgroundConnector():
                                   bytesize=serial.EIGHTBITS,
                                   parity=serial.PARITY_NONE,
                                   stopbits=serial.STOPBITS_ONE,
-                                  timeout=0)
+                                  timeout=0,
+                                  writeTimeout=0)
+          time.sleep(2)
         except serial.SerialException:
-          print 'Arduino not available.'
+          logging.warning('Arduino not available.')
     time.sleep(1)
 
 
@@ -242,10 +254,10 @@ def sendDataToArduino(data):
   expected_colors = ('red', 'green', 'blue')
   for color in expected_colors:
     if color not in colors:
-      print 'missing color %s, not updating color' % color
+      logging.warning('missing color %s, not updating color' % color)
       return
 
-  print 'sending colors to Arduino: %s' % str(colors)
+  logging.info('sending colors to Arduino: %s' % str(colors))
   message = ('\xFF\xFE' +
              chr(colors['red']) + chr(colors['green']) +
              chr(colors['blue']) +
@@ -256,9 +268,15 @@ def sendDataToArduino(data):
       return
 
     try:
-      arduino.write(message)
-    except serial.SerialException:
-      print 'Error writing to Arduino.'
+      arduino.read()
+      written = arduino.write(message)
+      if written < len(message):
+        logging.warning('Wrote %d of %d bytes to Arduino.' %
+                        (written, len(written)))
+    except serial.SerialTimeoutException, e:
+      logging.warning('Write timeout writing to Arduino.')
+    except serial.SerialException, e:
+      logging.warning('Error writing to Arduino: %s' % e)
       arduino = None
 
 
@@ -285,20 +303,24 @@ def getArguments():
 
   args = parser.parse_args()
 
-  print 'WebSocket server at %s on port %d' % (args.address, args.port_number)
-  print 'RGB channels at r: %d, g: %d, b: %d' % (args.red_pin, args.green_pin, args.blue_pin)
+  logging.info('WebSocket server at %s on port %d' % (args.address, args.port_number))
+  logging.info('RGB channels at r: %d, g: %d, b: %d' % (args.red_pin, args.green_pin, args.blue_pin))
 
   return args
 
 
 def main():
+  # Set up logging.
+  _fmt = '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+  logging.basicConfig(level=logging.DEBUG, format=_fmt)
+
   # Have id that uniquely identifies Raspberry Pi as a client to the hub server.
   # Change this id for private use. The following code is publicly known and
   # therefore not at all secure.
   idForRPi = '5a2649734c55285b24777e427e'
-  
+
   populateGammaTable()
-  
+
   # Get arguments for WebSocket server address and portal number.
   # To change them from the default values, set them as flag options.
   args = getArguments()
