@@ -85,6 +85,7 @@ class BroadcastServerProtocol(websocket.WebSocketServerProtocol):
 
   def connectionLost(self, reason):
      websocket.WebSocketServerProtocol.connectionLost(self, reason)
+     print "connection lost"
      self.factory.unregister(self)
 
 
