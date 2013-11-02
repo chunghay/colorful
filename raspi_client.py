@@ -106,6 +106,9 @@ class DataClientFactory(websocket.WebSocketClientFactory):
 
   def clientConnectionFailed(self, connector, reason):
     print "connection failed: " + str(reason)
+    time.sleep(1)
+    print "try reconnecting"
+    connector.connect()
 
   def clientConnectionLost(self, connector, reason):
     print "connection lost: " + str(reason)
@@ -142,7 +145,12 @@ def openI2CBus():
 # Read I2C data.
 def readI2CData(i2c_input, factory, idString):
   while True:
-    data = i2c_input.read_i2c_block_data(0x29, 0)
+    try:
+      data = i2c_input.read_i2c_block_data(0x29, 0)
+    except IOError:
+      print "Could not read I2C data"
+      continue
+
     clear = data[1] << 8 | data[0]
     red_raw = data[3] << 8 | data[2]
     green_raw = data[5] << 8 | data[4]
@@ -174,9 +182,6 @@ def readI2CData(i2c_input, factory, idString):
 
     factory.broadcast(json.dumps(colors))
     time.sleep(0.250)
-
-  else:
-    print "I2C connected device not found\n"
 
 
 def arduinoBackgroundConnector():
