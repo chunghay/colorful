@@ -120,7 +120,8 @@ class DataClientFactory(websocket.WebSocketClientFactory):
   def broadcast(self, msg):
     logging.info("broadcasting message: %s" % msg)
     if self.server is not None:
-      self.server.sendMessage(msg)
+      #self.server.sendMessage(msg) # This is buggy...
+      sendDataToArduino(msg)
 
 
 # Open I2C connection.
