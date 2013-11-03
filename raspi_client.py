@@ -113,6 +113,9 @@ class DataClientFactory(websocket.WebSocketClientFactory):
 
   def clientConnectionLost(self, connector, reason):
     logging.warning("connection lost: " + str(reason))
+    time.sleep(1)
+    logging.info("try reconnecting")
+    connector.connect()
 
   def broadcast(self, msg):
     logging.info("broadcasting message: %s" % msg)
@@ -150,6 +153,7 @@ def readI2CData(i2c_input, factory, idString):
       data = i2c_input.read_i2c_block_data(0x29, 0)
     except IOError:
       logging.warning("Could not read I2C data")
+      time.sleep(0.5)
       continue
 
     clear = data[1] << 8 | data[0]
