@@ -1,4 +1,31 @@
+* {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  padding: 2em;
+}
+
 #square {
-	width: 100px;
-	height: 100px;
+  width: 100px;
+  height: 100px;
+}
+
+#overlay {
+  background-color: #999;
+  border-radius: 1em;
+  color: #fff;
+  font-family: 'Helvetica';
+  font-weight: 100;
+  font-size: 4em;
+  height: 30%;
+  margin: 0 auto;
+  opacity: 0.5;
+  padding: 1em;
+}
+
+#overlay p {
+  margin: 0;
+  margin-bottom: 0.3em;
 }
